@@ -9,8 +9,12 @@
   "author": "",
   "license": "ISC",
   "dependencies": {
+    "ioredis": "^4.6.2",
     "lodash": "^4.17.11",
     "telegraf": "^3.27.1",
     "transmission-promise": "^1.1.2"
+  },
+  "devDependencies": {
+    "eslint": "^5.15.2"
   }
 }
