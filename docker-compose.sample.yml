@@ -1,0 +1,30 @@
+version: "2.1"
+
+services:
+  telegram-transmission-bot:
+    image: cornon/telegram-transmission-bot:latest
+    environment:
+      TG_TOKEN: "<insert your telegram token>"
+      REDIS: redis
+      TRANSMISSION_HOST: transmission
+      TRANSMISSION_LOGIN: transmission
+      TRANSMISSION_PASSWORD: transmission
+      DEBUG: TelegramTransmissionBot
+    depends_on:
+      - redis
+      - transmission
+
+  redis:
+    image: redis:latest
+    volumes:
+      - ./volumes/redis:/data
+
+  transmission:
+    image: linuxserver/transmission:latest
+    volumes:
+      - ./volumes/transmission-downloads:/downloads
+      - ./volumes/transmission-config:/config
+    environment:
+      - PUID=1000
+      - PGID=1000
+      - TZ=Europe/Kiev

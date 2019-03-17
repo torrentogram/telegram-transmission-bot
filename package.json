@@ -1,20 +1,23 @@
 {
-  "name": "telegram-transmission-bot",
-  "version": "1.0.0",
-  "description": "",
-  "main": "index.js",
-  "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1"
-  },
-  "author": "",
-  "license": "ISC",
-  "dependencies": {
-    "ioredis": "^4.6.2",
-    "lodash": "^4.17.11",
-    "telegraf": "^3.27.1",
-    "transmission-promise": "^1.1.2"
-  },
-  "devDependencies": {
-    "eslint": "^5.15.2"
-  }
+    "name": "telegram-transmission-bot",
+    "version": "1.0.0",
+    "description": "",
+    "main": "index.js",
+    "scripts": {
+        "start": "node ./bot.js",
+        "push": "./docker-push.sh"
+    },
+    "author": "",
+    "license": "ISC",
+    "dependencies": {
+        "debug": "^4.1.1",
+        "ioredis": "^4.6.2",
+        "lodash": "^4.17.11",
+        "telegraf": "^3.27.1",
+        "telegraf-logger": "^3.0.0",
+        "transmission-promise": "^1.1.2"
+    },
+    "devDependencies": {
+        "eslint": "^5.15.2"
+    }
 }

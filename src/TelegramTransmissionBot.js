@@ -2,10 +2,19 @@ const Telegraf = require('telegraf');
 const Transmission = require('transmission-promise');
 const _ = require('lodash');
 const IORedis = require('ioredis');
+const debug = require('debug')('TelegramTransmissionBot');
+const TelegrafLogger = require('telegraf-logger');
+
+const WAIT_LIST = 'TelegramTransmissionBot:waitList';
 
 class TelegramTransmissionBot {
     constructor({ token, transmissionOptions, redis }) {
         this.bot = new Telegraf(token);
+        this.bot.use(
+            new TelegrafLogger({
+                log: debug
+            })
+        );
         this.transmission = new Transmission(transmissionOptions);
         this.redis = new IORedis(redis);
         this.waitList = new Map();
@@ -26,6 +35,11 @@ class TelegramTransmissionBot {
         setInterval(this.checkStatuses.bind(this), 1000);
     }
 
+    containsTorrentFile(ctx) {
+        const { message: { document: { mime_type } = {} } = {} } = ctx;
+        return mime_type === 'application/x-bittorrent';
+    }
+
     async addTorrent(ctx) {
         const {
             message: {
@@ -41,20 +55,15 @@ class TelegramTransmissionBot {
     }
 
     async waitListRemove(torrentId) {
-        return await this.redis.hdel('waitList', torrentId);
+        return await this.redis.hdel(WAIT_LIST, torrentId);
     }
 
     async waitListAdd(torrentId, chatId) {
-        return await this.redis.hset('waitList', torrentId, chatId);
-    }
-
-    containsTorrentFile(ctx) {
-        const { message: { document: { mime_type } = {} } = {} } = ctx;
-        return mime_type === 'application/x-bittorrent';
+        return await this.redis.hset(WAIT_LIST, torrentId, chatId);
     }
 
     async waitListGetAll() {
-        return await this.redis.hgetall('waitList');
+        return await this.redis.hgetall(WAIT_LIST);
     }
 
     async checkStatuses() {
@@ -68,7 +77,7 @@ class TelegramTransmissionBot {
 
         for (const torrent of torrents) {
             if (torrent.status > 4) {
-                console.log('Torrent finished', torrent.name);
+                debug('Torrent finished: %s', torrent.name);
                 const chatId = parseInt(chatIdByTorrentId[torrent.id], 10);
                 await this.waitListRemove(torrent.id);
                 if (chatId) {
@@ -81,6 +90,19 @@ class TelegramTransmissionBot {
         }
     }
 
+    statusToEmoji(torrent) {
+        return {
+            0: '🚫 Stopped', // Torrent is stopped
+            1: '❓ Checking', // Queued to check files
+            2: '❓ Checking', // Checking files
+            3: '⬇️ Downloading', // Queued to download
+            4: '⬇️ Downloading', // Downloading
+            5: '⬆️ Seeding', // Queued to seed
+            6: '⬆️ Seeding', // Seeding
+            7: '😞 Cannot find peers' // Torrent can't find peers
+        }[torrent.status];
+    }
+
     async listTorrents(ctx) {
         const { transmission } = this;
         const { torrents } = await transmission.all();
@@ -88,8 +110,10 @@ class TelegramTransmissionBot {
             .orderBy(['addedDate'], ['desc'])
             .slice(0, 10)
             .value();
-        const message = topTorrents.map(t => t.name).join('\n');
-        return ctx.reply(message);
+        const message = topTorrents
+            .map((t, i) => `\n${i + 1}. ${this.statusToEmoji(t)}\n  ${t.name}`)
+            .join('\n');
+        return ctx.reply(`Recent torrents (up to 10):\n${message}`);
     }
 }
 
