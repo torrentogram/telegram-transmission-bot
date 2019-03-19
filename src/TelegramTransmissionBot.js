@@ -8,16 +8,39 @@ const TelegrafLogger = require('telegraf-logger');
 const WAIT_LIST = 'TelegramTransmissionBot:waitList';
 
 class TelegramTransmissionBot {
-    constructor({ token, transmissionOptions, redis }) {
+    /**
+     *
+     * @param {Object} options
+     * @param {string} options.token
+     * @param {Object} options.transmissionOptions
+     * @param {IORedis.Redis} options.redis
+     * @param {string[]} options.allowedUsers
+     */
+    constructor({ token, transmissionOptions, redis, allowedUsers }) {
         this.bot = new Telegraf(token);
         this.bot.use(
             new TelegrafLogger({
                 log: debug
             })
         );
+        this.bot.use(this.authMiddleware.bind(this));
         this.transmission = new Transmission(transmissionOptions);
         this.redis = new IORedis(redis);
         this.waitList = new Map();
+        this.allowedUsers = allowedUsers || [];
+    }
+
+    authMiddleware(ctx, next) {
+        const {
+            chat,
+            chat: { username }
+        } = ctx;
+        if (this.allowedUsers.includes(username)) {
+            next(ctx);
+        } else {
+            ctx.reply('You are not authenticated to this bot');
+            debug(`Access denied for chat ${JSON.stringify(chat)}`);
+        }
     }
 
     launch() {
@@ -47,11 +70,15 @@ class TelegramTransmissionBot {
             }
         } = ctx;
         const { transmission } = this;
-
-        const fileLink = await ctx.tg.getFileLink(file_id);
-        const torrent = await transmission.addUrl(fileLink);
-        await ctx.reply(`Added "${torrent.name}"`);
-        await this.waitListAdd(torrent.id, ctx.chat.id);
+        try {
+            const fileLink = await ctx.tg.getFileLink(file_id);
+            const torrent = await transmission.addUrl(fileLink);
+            await ctx.reply(`Added "${torrent.name}"`);
+            await this.waitListAdd(torrent.id, ctx.chat.id);
+        } catch (e) {
+            debug(`Error: ${e}`);
+            return ctx.reply(`Error: ${e}`);
+        }
     }
 
     async waitListRemove(torrentId) {
@@ -105,15 +132,23 @@ class TelegramTransmissionBot {
 
     async listTorrents(ctx) {
         const { transmission } = this;
-        const { torrents } = await transmission.all();
-        const topTorrents = _(torrents)
-            .orderBy(['addedDate'], ['desc'])
-            .slice(0, 10)
-            .value();
-        const message = topTorrents
-            .map((t, i) => `\n${i + 1}. ${this.statusToEmoji(t)}\n  ${t.name}`)
-            .join('\n');
-        return ctx.reply(`Recent torrents (up to 10):\n${message}`);
+        try {
+            const { torrents } = await transmission.all();
+            const topTorrents = _(torrents)
+                .orderBy(['addedDate'], ['desc'])
+                .slice(0, 10)
+                .value();
+            const message = topTorrents
+                .map(
+                    (t, i) =>
+                        `\n${i + 1}. ${this.statusToEmoji(t)}\n  ${t.name}`
+                )
+                .join('\n');
+            return ctx.reply(`Recent torrents (up to 10):\n${message}`);
+        } catch (e) {
+            debug(`Error: ${e}`);
+            return ctx.reply(`Error: ${e}`);
+        }
     }
 }
 

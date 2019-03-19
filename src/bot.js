@@ -7,7 +7,8 @@ const bot = new TelegramTransmissionBot({
         host: process.env.TRANSMISSION_HOST,
         username: process.env.TRANSMISSION_LOGIN,
         password: process.env.TRANSMISSION_PASSWORD
-    }
+    },
+    allowedUsers: (process.env.TG_ALLOWED_USERS || '').split(',')
 });
 
 bot.launch();
