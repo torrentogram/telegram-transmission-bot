@@ -7,7 +7,7 @@ const TelegrafLogger = require('telegraf-logger');
 const sleep = require('sleep-promise');
 
 const WAIT_LIST = 'TelegramTransmissionBot:waitList';
-const CHECK_POLLING_INTERVAL = 1000;
+const CHECK_POLLING_INTERVAL = 10000;
 
 class TelegramTransmissionBot {
     /**
