@@ -4,8 +4,10 @@ const _ = require('lodash');
 const IORedis = require('ioredis');
 const debug = require('debug')('TelegramTransmissionBot');
 const TelegrafLogger = require('telegraf-logger');
+const sleep = require('sleep-promise');
 
 const WAIT_LIST = 'TelegramTransmissionBot:waitList';
+const CHECK_POLLING_INTERVAL = 1000;
 
 class TelegramTransmissionBot {
     /**
@@ -55,7 +57,14 @@ class TelegramTransmissionBot {
             return;
         });
         bot.launch();
-        setInterval(this.checkStatuses.bind(this), 1000);
+        this.startCheckStatusPolling();
+    }
+
+    async startCheckStatusPolling() {
+        while (true) {
+            await sleep(CHECK_POLLING_INTERVAL);
+            await this.checkStatuses();
+        }
     }
 
     containsTorrentFile(ctx) {
@@ -94,14 +103,30 @@ class TelegramTransmissionBot {
     }
 
     async checkStatuses() {
+        debug('Status check');
         const { transmission, bot } = this;
 
         const chatIdByTorrentId = await this.waitListGetAll();
+        const waitListLength = Object.keys(chatIdByTorrentId).length;
+        if (waitListLength === 0) {
+            return;
+        }
+        debug('Checking %d torrents', waitListLength);
         const torrentIds = Object.keys(chatIdByTorrentId).map(i =>
             parseInt(i, 10)
         );
         const { torrents } = await transmission.get(torrentIds);
 
+        //Collect garbage (ids present in Redis but missing in Transmission)
+        const foundTorrentIds = torrents.map(t => parseInt(t.id, 10));
+        for (const waitingTorrentId of Object.keys(chatIdByTorrentId)) {
+            if (!foundTorrentIds.includes(parseInt(waitingTorrentId, 10))) {
+                debug('Torrent not found in transmission %s', waitingTorrentId);
+                await this.waitListRemove(waitingTorrentId);
+            }
+        }
+
+        //Check statuses
         for (const torrent of torrents) {
             if (torrent.status > 4) {
                 debug('Torrent finished: %s', torrent.name);

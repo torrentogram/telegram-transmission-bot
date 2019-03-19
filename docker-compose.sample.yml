@@ -5,6 +5,7 @@ services:
     image: cornon/telegram-transmission-bot:latest
     environment:
       TG_TOKEN: "<insert your telegram token>"
+      TG_ALLOWED_USERS: <username1,username2,username3>
       REDIS: redis
       TRANSMISSION_HOST: transmission
       TRANSMISSION_LOGIN: transmission
