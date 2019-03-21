@@ -63,7 +63,11 @@ class TelegramTransmissionBot {
     async startCheckStatusPolling() {
         while (true) {
             await sleep(CHECK_POLLING_INTERVAL);
-            await this.checkStatuses();
+            try {
+                await this.checkStatuses();
+            } catch (error) {
+                debug('checkStatuses failed with error %s', error.stack || error.message);
+            }
         }
     }
 
