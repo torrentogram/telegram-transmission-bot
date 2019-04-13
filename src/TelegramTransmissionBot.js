@@ -66,7 +66,10 @@ class TelegramTransmissionBot {
             try {
                 await this.checkStatuses();
             } catch (error) {
-                debug('checkStatuses failed with error %s', error.stack || error.message);
+                debug(
+                    'checkStatuses failed with error %s',
+                    error.stack || error.message
+                );
             }
         }
     }
@@ -146,7 +149,7 @@ class TelegramTransmissionBot {
         }
     }
 
-    statusToEmoji(torrent) {
+    renderStatus(torrent) {
         return {
             0: '🚫 Stopped', // Torrent is stopped
             1: '❓ Checking', // Queued to check files
@@ -159,6 +162,27 @@ class TelegramTransmissionBot {
         }[torrent.status];
     }
 
+    renderProgress(torrent) {
+        //Example: ██░░░░░░░░ 20%
+        const { percentDone } = torrent;
+        if (percentDone === 1) {
+            return '';
+        }
+        const length = 10;
+        const filledCount = Math.round(percentDone * length);
+        const emptyCount = length - filledCount;
+        const filled = _.repeat('█', filledCount);
+        const empty = _.repeat('░', emptyCount);
+        const percentage = Math.round(percentDone * 100);
+        return `${filled}${empty} ${percentage}%\n`;
+    }
+
+    renderTorrent(t, i) {
+        const status = this.renderStatus(t);
+        const progress = this.renderProgress(t);
+        return `\n${i + 1}. ${status}\n${progress}  ${t.name}`;
+    }
+
     async listTorrents(ctx) {
         const { transmission } = this;
         try {
@@ -168,10 +192,7 @@ class TelegramTransmissionBot {
                 .slice(0, 10)
                 .value();
             const message = topTorrents
-                .map(
-                    (t, i) =>
-                        `\n${i + 1}. ${this.statusToEmoji(t)}\n  ${t.name}`
-                )
+                .map((t, i) => this.renderTorrent(t, i))
                 .join('\n');
             return ctx.reply(`Recent torrents (up to 10):\n${message}`);
         } catch (e) {
