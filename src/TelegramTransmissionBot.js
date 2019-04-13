@@ -5,18 +5,19 @@ const IORedis = require('ioredis');
 const debug = require('debug')('TelegramTransmissionBot');
 const TelegrafLogger = require('telegraf-logger');
 const sleep = require('sleep-promise');
+const WaitList = require('./model/WaitList');
+const ReferenceList = require('./model/ReferenceList');
 
-const WAIT_LIST = 'TelegramTransmissionBot:waitList';
 const CHECK_POLLING_INTERVAL = 10000;
 
 class TelegramTransmissionBot {
     /**
-     *
      * @param {Object} options
      * @param {string} options.token
      * @param {Object} options.transmissionOptions
      * @param {IORedis.Redis} options.redis
      * @param {string[]} options.allowedUsers
+     *
      */
     constructor({ token, transmissionOptions, redis, allowedUsers }) {
         this.bot = new Telegraf(token);
@@ -27,9 +28,11 @@ class TelegramTransmissionBot {
         );
         this.bot.use(this.authMiddleware.bind(this));
         this.transmission = new Transmission(transmissionOptions);
-        this.redis = new IORedis(redis);
-        this.waitList = new Map();
         this.allowedUsers = allowedUsers || [];
+
+        this.redis = new IORedis(redis);
+        this.waitList = new WaitList({ redis: this.redis });
+        this.referenceList = new ReferenceList({ redis: this.redis });
     }
 
     authMiddleware(ctx, next) {
@@ -48,19 +51,26 @@ class TelegramTransmissionBot {
     launch() {
         const { bot } = this;
         bot.start(ctx => ctx.reply('Welcome'));
+
         bot.help(ctx => ctx.reply('Send me a torrent'));
+
         bot.command('list', ctx => this.listTorrents(ctx));
+
+        bot.hears(/^(\d+)/, ctx => this.selectTorrent(ctx));
+
         bot.on('message', ctx => {
             if (this.containsTorrentFile(ctx)) {
                 return this.addTorrent(ctx);
             }
             return;
         });
+
         bot.launch();
         this.startCheckStatusPolling();
     }
 
     async startCheckStatusPolling() {
+        // eslint-disable-next-line no-constant-condition
         while (true) {
             await sleep(CHECK_POLLING_INTERVAL);
             try {
@@ -90,30 +100,18 @@ class TelegramTransmissionBot {
             const fileLink = await ctx.tg.getFileLink(file_id);
             const torrent = await transmission.addUrl(fileLink);
             await ctx.reply(`Added "${torrent.name}"`);
-            await this.waitListAdd(torrent.id, ctx.chat.id);
+            await this.waitList.add(torrent.id, ctx.chat.id);
         } catch (e) {
             debug(`Error: ${e}`);
             return ctx.reply(`Error: ${e}`);
         }
     }
 
-    async waitListRemove(torrentId) {
-        return await this.redis.hdel(WAIT_LIST, torrentId);
-    }
-
-    async waitListAdd(torrentId, chatId) {
-        return await this.redis.hset(WAIT_LIST, torrentId, chatId);
-    }
-
-    async waitListGetAll() {
-        return await this.redis.hgetall(WAIT_LIST);
-    }
-
     async checkStatuses() {
         debug('Status check');
         const { transmission, bot } = this;
 
-        const chatIdByTorrentId = await this.waitListGetAll();
+        const chatIdByTorrentId = await this.waitList.getAll();
         const waitListLength = Object.keys(chatIdByTorrentId).length;
         if (waitListLength === 0) {
             return;
@@ -129,7 +127,7 @@ class TelegramTransmissionBot {
         for (const waitingTorrentId of Object.keys(chatIdByTorrentId)) {
             if (!foundTorrentIds.includes(parseInt(waitingTorrentId, 10))) {
                 debug('Torrent not found in transmission %s', waitingTorrentId);
-                await this.waitListRemove(waitingTorrentId);
+                await this.waitList.remove(waitingTorrentId);
             }
         }
 
@@ -138,7 +136,7 @@ class TelegramTransmissionBot {
             if (torrent.status > 4) {
                 debug('Torrent finished: %s', torrent.name);
                 const chatId = parseInt(chatIdByTorrentId[torrent.id], 10);
-                await this.waitListRemove(torrent.id);
+                await this.waitList.remove(torrent.id);
                 if (chatId) {
                     await bot.telegram.sendMessage(
                         chatId,
@@ -187,10 +185,13 @@ class TelegramTransmissionBot {
         const { transmission } = this;
         try {
             const { torrents } = await transmission.all();
+
             const topTorrents = _(torrents)
                 .orderBy(['addedDate'], ['desc'])
                 .slice(0, 10)
                 .value();
+            await this.referenceList.set(topTorrents);
+
             const message = topTorrents
                 .map((t, i) => this.renderTorrent(t, i))
                 .join('\n');
@@ -199,6 +200,38 @@ class TelegramTransmissionBot {
             debug(`Error: ${e}`);
             return ctx.reply(`Error: ${e}`);
         }
+    }
+
+    async selectTorrent(ctx) {
+        const { match = [] } = ctx;
+        const strTorrentIndexStartingFrom1 = match[1];
+        if (!strTorrentIndexStartingFrom1) {
+            return;
+        }
+        const torrentIndex = parseInt(strTorrentIndexStartingFrom1, 10) - 1;
+        if (torrentIndex < 0) {
+            return;
+        }
+
+        const ids = await this.referenceList.get();
+        if (ids === null) {
+            return ctx.reply(
+                'Wrong torrent number. To see all the torrents, run /list '
+            );
+        }
+        const id = ids[torrentIndex];
+        if (!id) {
+            return ctx.reply(
+                'Wrong torrent number. To see all the torrents, run /list '
+            );
+        }
+
+        const {
+            torrents: [torrent]
+        } = await this.transmission.get(id);
+
+        const torrentMessage = this.renderTorrent(torrent, torrentIndex);
+        await ctx.reply(torrentMessage);
     }
 }
 
