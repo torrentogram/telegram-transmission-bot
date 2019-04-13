@@ -1,4 +1,7 @@
 const Telegraf = require('telegraf');
+const Markup = require('telegraf/markup');
+const Extra = require('telegraf/extra');
+
 const Transmission = require('transmission-promise');
 const _ = require('lodash');
 const IORedis = require('ioredis');
@@ -57,6 +60,7 @@ class TelegramTransmissionBot {
         bot.command('list', ctx => this.listTorrents(ctx));
 
         bot.hears(/^(\d+)/, ctx => this.selectTorrent(ctx));
+        bot.action(/deleteTorrent:(\d+)/, ctx => this.deleteTorrent(ctx));
 
         bot.on('message', ctx => {
             if (this.containsTorrentFile(ctx)) {
@@ -202,6 +206,17 @@ class TelegramTransmissionBot {
         }
     }
 
+    async deleteTorrent(ctx) {
+        const { match = [] } = ctx;
+        const id = match[1];
+        if (!id) {
+            return;
+        }
+
+        await this.transmission.remove(parseInt(id, 10), true);
+        ctx.reply('Torrent deleted\n/list');
+    }
+
     async selectTorrent(ctx) {
         const { match = [] } = ctx;
         const strTorrentIndexStartingFrom1 = match[1];
@@ -231,7 +246,14 @@ class TelegramTransmissionBot {
         } = await this.transmission.get(id);
 
         const torrentMessage = this.renderTorrent(torrent, torrentIndex);
-        await ctx.reply(torrentMessage);
+        await ctx.reply(
+            torrentMessage,
+            Extra.markup(m =>
+                m.inlineKeyboard([
+                    m.callbackButton('Delete', `deleteTorrent:${torrent.id}`)
+                ])
+            )
+        );
     }
 }
 
