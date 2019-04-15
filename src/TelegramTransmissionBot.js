@@ -1,9 +1,9 @@
 const Telegraf = require('telegraf');
-const Markup = require('telegraf/markup');
 const Extra = require('telegraf/extra');
-
 const Transmission = require('transmission-promise');
 const _ = require('lodash');
+const { duration } = require('moment');
+const bytes = require('bytes');
 const IORedis = require('ioredis');
 const debug = require('debug')('TelegramTransmissionBot');
 const TelegrafLogger = require('telegraf-logger');
@@ -58,6 +58,8 @@ class TelegramTransmissionBot {
         bot.help(ctx => ctx.reply('Send me a torrent'));
 
         bot.command('list', ctx => this.listTorrents(ctx));
+
+        bot.command('info', ctx => this.showInfo(ctx));
 
         bot.hears(/^(\d+)/, ctx => this.selectTorrent(ctx));
         bot.action(/deleteTorrent:(\d+)/, ctx => this.deleteTorrent(ctx));
@@ -176,13 +178,31 @@ class TelegramTransmissionBot {
         const filled = _.repeat('█', filledCount);
         const empty = _.repeat('░', emptyCount);
         const percentage = Math.round(percentDone * 100);
-        return `${filled}${empty} ${percentage}%\n`;
+        const etaStr = duration(torrent.eta, 'seconds').humanize();
+        return `${filled}${empty} ${percentage}%\nRemaining time: ${etaStr}\n`;
     }
 
     renderTorrent(t, i) {
         const status = this.renderStatus(t);
         const progress = this.renderProgress(t);
-        return `\n${i + 1}. ${status}\n${progress}  ${t.name}`;
+        const size = bytes(t.sizeWhenDone);
+
+        return `\n${i + 1}. ${status} ${size}\n${progress}  ${t.name}`;
+    }
+
+    async showInfo(ctx) {
+        const { transmission } = this;
+        const {
+            'download-dir': downloadDir,
+            'download-dir-free-space': downloadDirFreeSpace,
+            version
+        } = await transmission.session();
+
+        const freeSpaceStr = bytes(downloadDirFreeSpace);
+
+        ctx.reply(
+            `Transmission ${version}\nDownload directory: ${downloadDir}\nFree space: ${freeSpaceStr}`
+        );
     }
 
     async listTorrents(ctx) {

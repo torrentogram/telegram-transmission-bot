@@ -10,9 +10,11 @@
     "author": "",
     "license": "ISC",
     "dependencies": {
+        "bytes": "^3.1.0",
         "debug": "^4.1.1",
         "ioredis": "^4.6.2",
         "lodash": "^4.17.11",
+        "moment": "^2.24.0",
         "sleep-promise": "^8.0.1",
         "telegraf": "^3.27.1",
         "telegraf-logger": "^3.0.0",
