@@ -10,6 +10,8 @@ services:
       TRANSMISSION_HOST: transmission
       TRANSMISSION_LOGIN: transmission
       TRANSMISSION_PASSWORD: transmission
+      RUTRACKER_LOGIN: your-login
+      RUTRACKER_PASSWORD: your-password
       DEBUG: TelegramTransmissionBot
     depends_on:
       - redis
