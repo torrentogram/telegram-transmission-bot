@@ -10,6 +10,13 @@ const TelegrafLogger = require('telegraf-logger');
 const sleep = require('sleep-promise');
 const WaitList = require('./model/WaitList');
 const ReferenceList = require('./model/ReferenceList');
+const RutrackerSearchResultsList = require('./model/RutrackerSearchResultsList');
+
+const {
+    RutrackerSucker,
+    rankResults,
+    clusterizeResults
+} = require('rutracker-sucker');
 
 const CHECK_POLLING_INTERVAL = 10000;
 
@@ -20,9 +27,17 @@ class TelegramTransmissionBot {
      * @param {Object} options.transmissionOptions
      * @param {IORedis.Redis} options.redis
      * @param {string[]} options.allowedUsers
-     *
+     * @param {string} options.rutrackerLogin
+     * @param {string} options.rutrackerPassword
      */
-    constructor({ token, transmissionOptions, redis, allowedUsers }) {
+    constructor({
+        token,
+        transmissionOptions,
+        redis,
+        allowedUsers,
+        rutrackerLogin,
+        rutrackerPassword
+    }) {
         this.bot = new Telegraf(token);
         this.bot.use(
             new TelegrafLogger({
@@ -36,6 +51,11 @@ class TelegramTransmissionBot {
         this.redis = new IORedis(redis);
         this.waitList = new WaitList({ redis: this.redis });
         this.referenceList = new ReferenceList({ redis: this.redis });
+        this.rutrackerSearchResultsList = new RutrackerSearchResultsList({
+            redis: this.redis
+        });
+
+        this.rutracker = new RutrackerSucker(rutrackerLogin, rutrackerPassword);
     }
 
     authMiddleware(ctx, next) {
@@ -55,13 +75,30 @@ class TelegramTransmissionBot {
         const { bot } = this;
         bot.start(ctx => ctx.reply('Welcome'));
 
-        bot.help(ctx => ctx.reply('Send me a torrent'));
+        bot.help(ctx =>
+            ctx.reply('Send me a torrent file or a link to a Rutracker topic')
+        );
 
         bot.command('list', ctx => this.listTorrents(ctx));
 
         bot.command('info', ctx => this.showInfo(ctx));
 
-        bot.hears(/^(\d+)/, ctx => this.selectTorrent(ctx));
+        bot.hears(/^(\d+)$/, ctx => this.selectTorrent(ctx));
+
+        bot.hears(
+            /^https:\/\/rutracker\.org\/forum\/viewtopic\.php\?t=(\d+)/,
+            ctx => this.downloadTorrentFromRutrackerLink(ctx)
+        );
+
+        bot.hears(/^\/topic(\d+)$/, ctx =>
+            this.downloadTorrentFromRutrackerLink(ctx)
+        );
+        bot.hears(/^\/more_([a-f0-9]+)$/, ctx =>
+            this.showMoreSearchResults(ctx)
+        );
+
+        bot.hears(/^.+$/, ctx => this.searchTorrent(ctx));
+
         bot.action(/deleteTorrent:(\d+)/, ctx => this.deleteTorrent(ctx));
 
         bot.on('message', ctx => {
@@ -73,6 +110,120 @@ class TelegramTransmissionBot {
 
         bot.launch();
         this.startCheckStatusPolling();
+    }
+    async showMoreSearchResults(ctx) {
+        try {
+            const {
+                match: [, id]
+            } = ctx;
+
+            const list = await this.rutrackerSearchResultsList.get(id);
+            if (!list || !list.length) {
+                await ctx.reply('No results');
+                return;
+            }
+
+            await ctx.reply('Ranking...');
+            const topics = await this.rutracker.getTopics(
+                list.map(result => result.topicId)
+            );
+            const rankedResults = rankResults(list, topics);
+            await ctx.replyWithHTML(
+                rankedResults
+                    .map(result => this.formatSearchResult(result))
+                    .join('\n\n')
+            );
+        } catch (e) {
+            debug(`Error: ${e}`);
+            return ctx.reply(`Error: ${e}`);
+        }
+    }
+    async searchTorrent(ctx) {
+        try {
+            const {
+                message: { text }
+            } = ctx;
+
+            await ctx.reply('Searching...');
+
+            const items = await this.rutracker.search(text);
+            const clusters = clusterizeResults(items, 'seeds');
+            if (!clusters.length) {
+                await ctx.reply('No results');
+                return;
+            }
+            const [popularCluster, otherCluster] = clusters;
+            await ctx.reply('Ranking...');
+            const topics = await this.rutracker.getTopics(
+                popularCluster.map(result => result.topicId)
+            );
+            const rankedResults = rankResults(popularCluster, topics);
+            await ctx.replyWithHTML(
+                rankedResults
+                    .map(result => this.formatSearchResult(result))
+                    .join('\n\n')
+            );
+
+            if (otherCluster && otherCluster.length) {
+                const moreResults = otherCluster.slice(0, 15);
+                const otherSearchResultId = await this.rutrackerSearchResultsList.create(
+                    moreResults
+                );
+                await ctx.reply(
+                    `More ${moreResults.length} results /more_${otherSearchResultId}`
+                );
+            }
+        } catch (e) {
+            debug(`Error: ${e}`);
+            return ctx.reply(`Error: ${e}`);
+        }
+    }
+
+    /**
+     *
+     * @param { import('rutracker-sucker').RankedSearchResult } result
+     */
+    formatSearchResult(result) {
+        return [
+            `${this.formatRank(result.rank)} ${result.title}`,
+            `<a href="${result.topicUrl}">View</a>`,
+            `Seeds: <b>${result.seeds}</b>`,
+            `<i>${bytes(result.size)}</i>`,
+            `⬇️ Download: /topic${result.topicId}`
+        ].join('\n');
+    }
+
+    formatRank(rank) {
+        if (rank < 0) {
+            return _('😁').repeat(-rank);
+        } else if (rank > 0) {
+            return _('😥').repeat(rank);
+        } else {
+            return '';
+        }
+    }
+
+    async downloadTorrentFromRutrackerLink(ctx) {
+        try {
+            const {
+                match: [, topicIdStr]
+            } = ctx;
+            const topicId = parseInt(topicIdStr, 10);
+            if (!topicId) {
+                throw new Error('Illegal topic ID');
+            }
+            const file = await this.rutracker.getTorrentFile(topicId);
+            const torrent = await this.transmission.addBase64(
+                file.data.toString('base64')
+            );
+            await ctx.reply(`Added "${torrent.name}"`);
+            await this.waitList.add(torrent.id, ctx.chat.id);
+
+            await ctx.reply('Torrent added');
+        } catch (e) {
+            debug(`Error: ${e}`);
+            return ctx.reply(`Error: ${e}`);
+        }
     }
 
     async startCheckStatusPolling() {

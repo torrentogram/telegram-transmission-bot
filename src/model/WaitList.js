@@ -1,25 +1,23 @@
-const IORedis = require('ioredis');
-
-const WAIT_LIST = 'TelegramTransmissionBot:WaitList';
+const PREFIX = 'TelegramTransmissionBot:WaitList';
 
 module.exports = class WaitList {
     /**
      * @param {Object} options
-     * @param {IORedis.Redis} options.redis
+     * @param {import('ioredis').Redis} options.redis
      */
     constructor({ redis }) {
         this.redis = redis;
     }
 
     async remove(torrentId) {
-        return await this.redis.hdel(WAIT_LIST, torrentId);
+        return await this.redis.hdel(PREFIX, torrentId);
     }
 
     async add(torrentId, chatId) {
-        return await this.redis.hset(WAIT_LIST, torrentId, chatId);
+        return await this.redis.hset(PREFIX, torrentId, chatId);
     }
 
     async getAll() {
-        return await this.redis.hgetall(WAIT_LIST);
+        return await this.redis.hgetall(PREFIX);
     }
 };

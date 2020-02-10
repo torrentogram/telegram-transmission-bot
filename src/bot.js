@@ -8,7 +8,9 @@ const bot = new TelegramTransmissionBot({
         username: process.env.TRANSMISSION_LOGIN,
         password: process.env.TRANSMISSION_PASSWORD
     },
-    allowedUsers: (process.env.TG_ALLOWED_USERS || '').split(',')
+    allowedUsers: (process.env.TG_ALLOWED_USERS || '').split(','),
+    rutrackerLogin: process.env.RUTRACKER_LOGIN,
+    rutrackerPassword: process.env.RUTRACKER_PASSWORD
 });
 
 bot.launch();
