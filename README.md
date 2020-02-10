@@ -37,6 +37,8 @@ Run `npm start` with the following environment variables provided:
     "TRANSMISSION_HOST": "127.0.0.1",
     "TRANSMISSION_LOGIN": "transmission",
     "TRANSMISSION_PASSWORD": "transmission",
+    "RUTRACKER_LOGIN": "your-login",
+    "RUTRACKER_PASSWORD": "your-password",
     "DEBUG": "TelegramTransmissionBot", //leave it if you want to enable the logging
     "NODE_ENV": "production"
 }
@@ -62,6 +64,8 @@ services:
       TRANSMISSION_HOST: transmission
       TRANSMISSION_LOGIN: transmission
       TRANSMISSION_PASSWORD: transmission
+      RUTRACKER_LOGIN: your-login
+      RUTRACKER_PASSWORD: your-password
       DEBUG: TelegramTransmissionBot
     depends_on:
       - redis
