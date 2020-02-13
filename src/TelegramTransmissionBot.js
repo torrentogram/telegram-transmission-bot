@@ -101,7 +101,11 @@ class TelegramTransmissionBot {
 
         bot.hears(/^.+$/, ctx => this.searchTorrent(ctx));
 
-        bot.action(/deleteTorrent:(\d+)/, ctx => this.deleteTorrent(ctx));
+        bot.action(/deleteTorrentYes:(\d+)/, ctx => this.deleteTorrentYes(ctx));
+        bot.action(/deleteTorrentNo:(\d+)/, ctx => this.deleteTorrentNo(ctx));
+        bot.action(/confirmDeleteTorrent:(\d+)/, ctx =>
+            this.confirmDeleteTorrent(ctx)
+        );
 
         bot.action(/listFiles:(\d+)/, ctx => this.listFiles(ctx));
 
@@ -380,7 +384,7 @@ class TelegramTransmissionBot {
         }
     }
 
-    async deleteTorrent(ctx) {
+    async deleteTorrentYes(ctx) {
         const { match = [] } = ctx;
         const id = match[1];
         if (!id) {
@@ -388,7 +392,22 @@ class TelegramTransmissionBot {
         }
 
         await this.transmission.remove(parseInt(id, 10), true);
-        ctx.reply("Torrent deleted\n/list");
+        await ctx.deleteMessage();
+        await ctx.reply("Torrent deleted\n/list");
+    }
+
+    /**
+     *
+     * @param {import('telegraf').ContextMessageUpdate} ctx
+     */
+    async deleteTorrentNo(ctx) {
+        const { match = [] } = ctx;
+        const id = match[1];
+        if (!id) {
+            return;
+        }
+
+        await ctx.deleteMessage();
     }
 
     async listFiles(ctx) {
@@ -396,8 +415,12 @@ class TelegramTransmissionBot {
             const { match = [] } = ctx;
             const id = parseInt(match[1], 10);
             const {
-                torrents: [{ files }]
+                torrents: [{ files } = {}] = []
             } = await this.transmission.get(id);
+            if (!files) {
+                await ctx.reply("Files not found");
+                return;
+            }
 
             ctx.replyWithHTML(this.renderFiles(id, files));
         } catch (e) {
@@ -444,7 +467,26 @@ class TelegramTransmissionBot {
                 : "";
         return fileTree.renderFilesList(files.slice(0, 25), id) + skipped;
     }
+    async confirmDeleteTorrent(ctx) {
+        const { match = [] } = ctx;
+        const id = match[1];
+        if (!id) {
+            return;
+        }
 
+        await ctx.reply(
+            "Are you sure?",
+            Extra.markup(m =>
+                m.inlineKeyboard([
+                    m.callbackButton(
+                        "❌ Yes, delete it",
+                        `deleteTorrentYes:${id}`
+                    ),
+                    m.callbackButton("✅ No, leave it", `deleteTorrentNo:${id}`)
+                ])
+            )
+        );
+    }
     async selectTorrent(ctx) {
         try {
             const { match = [] } = ctx;
@@ -471,8 +513,8 @@ class TelegramTransmissionBot {
                 Extra.markup(m =>
                     m.inlineKeyboard([
                         m.callbackButton(
-                            "🗑 Delete",
-                            `deleteTorrent:${torrent.id}`
+                            "❌ Delete",
+                            `confirmDeleteTorrent:${torrent.id}`
                         ),
                         m.callbackButton("📁 Files", `listFiles:${torrent.id}`)
                     ])

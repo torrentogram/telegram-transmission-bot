@@ -9,9 +9,10 @@ const SIZE_LIMIT = bytes.parse("50MB");
  * @property {number} bytesCompleted
  *
  * @typedef FileNode
- * @property primaryText
- * @property secondaryText
- * @property link
+ * @property {string} icon
+ * @property {string} primaryText
+ * @property {string} secondaryText
+ * @property {string} link
  */
 
 /**
@@ -30,13 +31,15 @@ function parseFilesList(files, torrentId) {
         const dir = dirname(file.name);
         if (currentDir !== dir) {
             nodes.push({
-                primaryText: `${dir}/:`
+                primaryText: `${dir}/:`,
+                icon: "📂"
             });
             currentDir = dir;
         }
         const isDownloaded = file.bytesCompleted === file.length;
         const isUnderSizeLimit = file.length <= SIZE_LIMIT;
         nodes.push({
+            icon: "📄",
             primaryText: basename(file.name),
             secondaryText: bytes(file.length),
             link:
@@ -64,7 +67,11 @@ function renderNodes(nodes) {
                 lines.push(node.link);
             }
             if (node.primaryText) {
-                lines.push(`<pre>${node.primaryText}</pre>`);
+                lines.push(
+                    `<pre>${node.icon ? `${node.icon} ` : ""}${
+                        node.primaryText
+                    }</pre>`
+                );
             }
             if (node.secondaryText) {
                 lines.push(`<i>${node.secondaryText}</i>`);
