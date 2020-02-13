@@ -12,7 +12,7 @@ const sleep = require("sleep-promise");
 const WaitList = require("./model/WaitList");
 const RutrackerSearchResultsList = require("./model/RutrackerSearchResultsList");
 const fileTree = require("./lib/fileTree");
-
+const server = require("./lib/server");
 const {
     RutrackerSucker,
     rankResults,
@@ -30,6 +30,7 @@ class TelegramTransmissionBot {
      * @param {string[]} options.allowedUsers
      * @param {string} options.rutrackerLogin
      * @param {string} options.rutrackerPassword
+     * @param {string} options.tunnelRoot
      */
     constructor({
         token,
@@ -37,7 +38,8 @@ class TelegramTransmissionBot {
         redis,
         allowedUsers,
         rutrackerLogin,
-        rutrackerPassword
+        rutrackerPassword,
+        tunnelRoot
     }) {
         this.bot = new Telegraf(token);
         this.bot.use(
@@ -56,6 +58,7 @@ class TelegramTransmissionBot {
         });
 
         this.rutracker = new RutrackerSucker(rutrackerLogin, rutrackerPassword);
+        server.init({ root: tunnelRoot });
     }
 
     authMiddleware(ctx, next) {
@@ -80,8 +83,8 @@ class TelegramTransmissionBot {
         );
 
         bot.command("list", ctx => this.listTorrents(ctx));
-
         bot.command("info", ctx => this.showInfo(ctx));
+        bot.command("tunnel", ctx => this.tunnel(ctx));
 
         bot.hears(/^\/torrent(\d+)$/, ctx => this.selectTorrent(ctx));
 
@@ -119,6 +122,12 @@ class TelegramTransmissionBot {
         bot.launch();
         this.startCheckStatusPolling();
     }
+
+    async tunnel(ctx) {
+        const url = await server.startTunnel();
+        ctx.reply(url);
+    }
+
     async showMoreSearchResults(ctx) {
         try {
             const {
