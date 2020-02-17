@@ -12,7 +12,7 @@ const sleep = require("sleep-promise");
 const WaitList = require("./model/WaitList");
 const RutrackerSearchResultsList = require("./model/RutrackerSearchResultsList");
 const fileTree = require("./lib/fileTree");
-const server = require("./lib/server");
+const { TunnelAPI } = require("./lib/TunnelAPI");
 const {
     RutrackerSucker,
     rankResults,
@@ -30,7 +30,7 @@ class TelegramTransmissionBot {
      * @param {string[]} options.allowedUsers
      * @param {string} options.rutrackerLogin
      * @param {string} options.rutrackerPassword
-     * @param {string} options.tunnelRoot
+     * @param {string} options.tunnelApi
      */
     constructor({
         token,
@@ -39,7 +39,7 @@ class TelegramTransmissionBot {
         allowedUsers,
         rutrackerLogin,
         rutrackerPassword,
-        tunnelRoot
+        tunnelApi
     }) {
         this.bot = new Telegraf(token);
         this.bot.use(
@@ -58,7 +58,8 @@ class TelegramTransmissionBot {
         });
 
         this.rutracker = new RutrackerSucker(rutrackerLogin, rutrackerPassword);
-        server.init({ root: tunnelRoot });
+
+        this.tunnelClient = new TunnelAPI({ url: tunnelApi });
     }
 
     authMiddleware(ctx, next) {
@@ -85,6 +86,7 @@ class TelegramTransmissionBot {
         bot.command("list", ctx => this.listTorrents(ctx));
         bot.command("info", ctx => this.showInfo(ctx));
         bot.command("tunnel", ctx => this.tunnel(ctx));
+        bot.command("untunnel", ctx => this.untunnel(ctx));
 
         bot.hears(/^\/torrent(\d+)$/, ctx => this.selectTorrent(ctx));
 
@@ -124,8 +126,23 @@ class TelegramTransmissionBot {
     }
 
     async tunnel(ctx) {
-        const url = await server.startTunnel();
-        ctx.reply(url);
+        try {
+            const {
+                tunnel: { url }
+            } = await this.tunnelClient.start();
+            ctx.reply(url);
+        } catch (e) {
+            await ctx.reply(`Error: ${e}`);
+        }
+    }
+
+    async untunnel(ctx) {
+        try {
+            await this.tunnelClient.stop();
+            ctx.reply("Tunnel stopped");
+        } catch (e) {
+            await ctx.reply(`Error: ${e}`);
+        }
     }
 
     async showMoreSearchResults(ctx) {
@@ -366,10 +383,19 @@ class TelegramTransmissionBot {
             version
         } = await transmission.session();
 
+        const { tunnel } = await this.tunnelClient.status();
+
         const freeSpaceStr = bytes(downloadDirFreeSpace);
 
         ctx.reply(
-            `Transmission ${version}\nDownload directory: ${downloadDir}\nFree space: ${freeSpaceStr}`
+            `
+Transmission ${version}
+Download directory: ${downloadDir}
+Free space: ${freeSpaceStr}
+
+Tunnel is ${tunnel.isRunning ? "up" : "down"}
+${tunnel.isRunning ? `Url: ${tunnel.url}, stop: /untunnel` : "start: /tunnel"}
+`
         );
     }
 

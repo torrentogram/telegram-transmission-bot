@@ -11,7 +11,7 @@ const bot = new TelegramTransmissionBot({
     allowedUsers: (process.env.TG_ALLOWED_USERS || "").split(","),
     rutrackerLogin: process.env.RUTRACKER_LOGIN,
     rutrackerPassword: process.env.RUTRACKER_PASSWORD,
-    tunnelRoot: process.env.TUNNEL_ROOT
+    tunnelApi: process.env.TUNNEL_API
 });
 
 bot.launch();
