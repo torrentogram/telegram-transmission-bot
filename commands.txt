@@ -1,0 +1,5 @@
+list - LIst torrents
+info - Show system status
+help - Show help
+tunnel - Start tunnel
+untunnel - Stop tunnel
