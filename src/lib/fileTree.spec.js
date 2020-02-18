@@ -5,12 +5,12 @@ describe("fileTree", () => {
      * @type {Array<import('./fileTree').FileItem>}
      */
     const files = [
-        { name: "folder 1/file1.txt", length: 1024 },
-        { name: "folder 1/file2.txt", length: 1024 },
-        { name: "file3.txt", length: 1024 },
-        { name: "file4.txt", length: 1024 },
-        { name: "folder 2/file5.txt", length: 1024 },
-        { name: "folder 2/file6.txt", length: 1024 }
+        { name: "folder 1/file1.txt", length: 1024, bytesCompleted: 1024 },
+        { name: "folder 1/file2.txt", length: 1024, bytesCompleted: 1024 },
+        { name: "file3.txt", length: 1024, bytesCompleted: 1024 },
+        { name: "file4.txt", length: 1024, bytesCompleted: 1024 },
+        { name: "folder 2/file5.txt", length: 1024, bytesCompleted: 1024 },
+        { name: "folder 2/file6.txt", length: 1024, bytesCompleted: 50 }
     ];
     const torrentId = 123;
     describe("parseFilesList", () => {
@@ -18,41 +18,50 @@ describe("fileTree", () => {
             expect(parseFilesList(files, torrentId)).toMatchInlineSnapshot(`
                 Array [
                   Object {
-                    "primaryText": "folder 1",
+                    "icon": "📂",
+                    "primaryText": "folder 1/:",
                   },
                   Object {
+                    "icon": "📄",
                     "link": "/file123_0",
                     "primaryText": "file1.txt",
                     "secondaryText": "1KB",
                   },
                   Object {
+                    "icon": "📄",
                     "link": "/file123_1",
                     "primaryText": "file2.txt",
                     "secondaryText": "1KB",
                   },
                   Object {
-                    "primaryText": ".",
+                    "icon": "📂",
+                    "primaryText": "./:",
                   },
                   Object {
+                    "icon": "📄",
                     "link": "/file123_2",
                     "primaryText": "file3.txt",
                     "secondaryText": "1KB",
                   },
                   Object {
+                    "icon": "📄",
                     "link": "/file123_3",
                     "primaryText": "file4.txt",
                     "secondaryText": "1KB",
                   },
                   Object {
-                    "primaryText": "folder 2",
+                    "icon": "📂",
+                    "primaryText": "folder 2/:",
                   },
                   Object {
+                    "icon": "📄",
                     "link": "/file123_4",
                     "primaryText": "file5.txt",
                     "secondaryText": "1KB",
                   },
                   Object {
-                    "link": "/file123_5",
+                    "icon": "📄",
+                    "link": null,
                     "primaryText": "file6.txt",
                     "secondaryText": "1KB",
                   },
@@ -64,36 +73,35 @@ describe("fileTree", () => {
         it("should convert a list of nodes to string", () => {
             expect(renderNodes(parseFilesList(files, torrentId)))
                 .toMatchInlineSnapshot(`
-"<pre>folder 1</pre>
+                "<pre>📂 folder 1/:</pre>
 
-/file123_0
-<pre>file1.txt</pre>
-<i>1KB</i>
+                /file123_0
+                <pre>📄 file1.txt</pre>
+                <i>1KB</i>
 
-/file123_1
-<pre>file2.txt</pre>
-<i>1KB</i>
+                /file123_1
+                <pre>📄 file2.txt</pre>
+                <i>1KB</i>
 
-<pre>.</pre>
+                <pre>📂 ./:</pre>
 
-/file123_2
-<pre>file3.txt</pre>
-<i>1KB</i>
+                /file123_2
+                <pre>📄 file3.txt</pre>
+                <i>1KB</i>
 
-/file123_3
-<pre>file4.txt</pre>
-<i>1KB</i>
+                /file123_3
+                <pre>📄 file4.txt</pre>
+                <i>1KB</i>
 
-<pre>folder 2</pre>
+                <pre>📂 folder 2/:</pre>
 
-/file123_4
-<pre>file5.txt</pre>
-<i>1KB</i>
+                /file123_4
+                <pre>📄 file5.txt</pre>
+                <i>1KB</i>
 
-/file123_5
-<pre>file6.txt</pre>
-<i>1KB</i>"
-`);
+                <pre>📄 file6.txt</pre>
+                <i>1KB</i>"
+            `);
         });
     });
 });
