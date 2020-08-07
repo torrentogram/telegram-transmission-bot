@@ -17,7 +17,7 @@
     "ioredis": "^4.6.2",
     "lodash": "^4.17.13",
     "moment": "^2.24.0",
-    "rutracker-sucker": "^1.0.7",
+    "rutracker-sucker": "^1.0.8",
     "sleep-promise": "^8.0.1",
     "telegraf": "^3.27.1",
     "telegraf-logger": "^3.0.0",
