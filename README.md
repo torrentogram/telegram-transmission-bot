@@ -62,6 +62,7 @@ services:
       TG_TOKEN: "your-telegram-token" #put your token here
       REDIS: redis
       TRANSMISSION_HOST: transmission
+      TRANSMISSION_PORT: 9091
       TRANSMISSION_LOGIN: transmission
       TRANSMISSION_PASSWORD: transmission
       RUTRACKER_LOGIN: your-login

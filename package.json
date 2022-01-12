@@ -21,7 +21,7 @@
     "sleep-promise": "^8.0.1",
     "telegraf": "^3.27.1",
     "telegraf-logger": "^3.0.0",
-    "transmission-promise": "^1.1.2"
+    "transmission-promise": "^1.1.5"
   },
   "devDependencies": {
     "eslint": "^5.15.2",
