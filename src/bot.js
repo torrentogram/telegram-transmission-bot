@@ -5,6 +5,7 @@ const bot = new TelegramTransmissionBot({
     redis: process.env.REDIS,
     transmissionOptions: {
         host: process.env.TRANSMISSION_HOST,
+        port: parseInt(process.env.TRANSMISSION_PORT) || 9091,
         username: process.env.TRANSMISSION_LOGIN,
         password: process.env.TRANSMISSION_PASSWORD
     },

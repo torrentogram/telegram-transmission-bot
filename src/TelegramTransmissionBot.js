@@ -25,12 +25,18 @@ class TelegramTransmissionBot {
     /**
      * @param {Object} options
      * @param {string} options.token
-     * @param {Object} options.transmissionOptions
+     * 
      * @param {IORedis.Redis} options.redis
      * @param {string[]} options.allowedUsers
      * @param {string} options.rutrackerLogin
      * @param {string} options.rutrackerPassword
      * @param {string} options.tunnelApi
+     * 
+     * @param {Object} options.transmissionOptions
+     * @param {string} options.transmissionOptions.host
+     * @param {number | undefined} options.transmissionOptions.port
+     * @param {string | undefined} options.transmissionOptions.username
+     * @param {string | undefined} options.transmissionOptions.password
      */
     constructor({
         token,
