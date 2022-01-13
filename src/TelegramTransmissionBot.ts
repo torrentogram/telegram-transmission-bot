@@ -1,43 +1,43 @@
-const path = require("path");
-const Telegraf = require("telegraf");
-const Extra = require("telegraf/extra");
-const Transmission = require("transmission-promise");
-const _ = require("lodash");
-const { duration } = require("moment");
-const bytes = require("bytes");
-const IORedis = require("ioredis");
-const debug = require("debug")("TelegramTransmissionBot");
-const TelegrafLogger = require("telegraf-logger");
-const sleep = require("sleep-promise");
-const WaitList = require("./model/WaitList");
-const RutrackerSearchResultsList = require("./model/RutrackerSearchResultsList");
-const fileTree = require("./lib/fileTree");
-const { TunnelAPI } = require("./lib/TunnelAPI");
-const {
+import path from 'path';
+import Telegraf from 'telegraf';
+import { Extra } from 'telegraf';
+import Transmission from 'transmission-promise';
+import _ from 'lodash';
+import { duration } from 'moment';
+import bytes from 'bytes';
+import IORedis, { Redis } from 'ioredis';
+const debug = require('debug')('TelegramTransmissionBot');
+
+//@ts-ignore
+import TelegrafLogger from 'telegraf-logger';
+import sleep from 'sleep-promise';
+
+import { WaitList } from './model/WaitList';
+import { RutrackerSearchResultsList } from './model/RutrackerSearchResultsList';
+import fileTree from './lib/fileTree';
+import { TunnelAPI } from './lib/TunnelAPI';
+import {
     RutrackerSucker,
     rankResults,
-    clusterizeResults
-} = require("rutracker-sucker");
+    clusterizeResults,
+    RankedSearchResult,
+} from 'rutracker-sucker';
+import { TelegrafContext } from 'telegraf/typings/context';
 
 const CHECK_POLLING_INTERVAL = 10000;
 
+type Ctx = TelegrafContext;
+
 class TelegramTransmissionBot {
-    /**
-     * @param {Object} options
-     * @param {string} options.token
-     * 
-     * @param {IORedis.Redis} options.redis
-     * @param {string[]} options.allowedUsers
-     * @param {string} options.rutrackerLogin
-     * @param {string} options.rutrackerPassword
-     * @param {string} options.tunnelApi
-     * 
-     * @param {Object} options.transmissionOptions
-     * @param {string} options.transmissionOptions.host
-     * @param {number | undefined} options.transmissionOptions.port
-     * @param {string | undefined} options.transmissionOptions.username
-     * @param {string | undefined} options.transmissionOptions.password
-     */
+    private readonly bot: Telegraf<Ctx>;
+    private readonly transmission: Transmission;
+    private readonly allowedUsers: string[];
+    private readonly redis: Redis;
+    private readonly waitList: WaitList;
+    private readonly rutrackerSearchResultsList: RutrackerSearchResultsList;
+    private readonly rutracker: RutrackerSucker;
+    private readonly tunnelClient: TunnelAPI;
+
     constructor({
         token,
         transmissionOptions,
@@ -45,12 +45,24 @@ class TelegramTransmissionBot {
         allowedUsers,
         rutrackerLogin,
         rutrackerPassword,
-        tunnelApi
+        tunnelApi,
+    }: {
+        token: string;
+        transmissionOptions: {
+            port?: string;
+            username: string;
+            password: string;
+        };
+        redis: string;
+        allowedUsers: string[];
+        rutrackerLogin: string;
+        rutrackerPassword: string;
+        tunnelApi: string;
     }) {
         this.bot = new Telegraf(token);
         this.bot.use(
             new TelegrafLogger({
-                log: debug
+                log: debug,
             })
         );
         this.bot.use(this.authMiddleware.bind(this));
@@ -60,7 +72,7 @@ class TelegramTransmissionBot {
         this.redis = new IORedis(redis);
         this.waitList = new WaitList({ redis: this.redis });
         this.rutrackerSearchResultsList = new RutrackerSearchResultsList({
-            redis: this.redis
+            redis: this.redis,
         });
 
         this.rutracker = new RutrackerSucker(rutrackerLogin, rutrackerPassword);
@@ -68,59 +80,61 @@ class TelegramTransmissionBot {
         this.tunnelClient = new TunnelAPI({ url: tunnelApi });
     }
 
-    authMiddleware(ctx, next) {
+    authMiddleware(ctx: Ctx, next) {
         const {
             chat,
-            chat: { username }
+            chat: { username },
         } = ctx;
         if (this.allowedUsers.includes(username)) {
             next(ctx);
         } else {
-            ctx.reply("You are not authenticated to this bot");
+            ctx.reply('You are not authenticated to this bot');
             debug(`Access denied for chat ${JSON.stringify(chat)}`);
         }
     }
 
     launch() {
         const { bot } = this;
-        bot.start(ctx => ctx.reply("Welcome"));
+        bot.start((ctx) => ctx.reply('Welcome'));
 
-        bot.help(ctx =>
-            ctx.reply("Send me a torrent file or a link to a Rutracker topic")
+        bot.help((ctx) =>
+            ctx.reply('Send me a torrent file or a link to a Rutracker topic')
         );
 
-        bot.command("list", ctx => this.listTorrents(ctx));
-        bot.command("info", ctx => this.showInfo(ctx));
-        bot.command("tunnel", ctx => this.tunnel(ctx));
-        bot.command("untunnel", ctx => this.untunnel(ctx));
+        bot.command('list', (ctx) => this.listTorrents(ctx));
+        bot.command('info', (ctx) => this.showInfo(ctx));
+        bot.command('tunnel', (ctx) => this.tunnel(ctx));
+        bot.command('untunnel', (ctx) => this.untunnel(ctx));
 
-        bot.hears(/^\/torrent(\d+)$/, ctx => this.selectTorrent(ctx));
+        bot.hears(/^\/torrent(\d+)$/, (ctx) => this.selectTorrent(ctx));
 
         bot.hears(
             /^https:\/\/rutracker\.org\/forum\/viewtopic\.php\?t=(\d+)/,
-            ctx => this.downloadTorrentFromRutrackerLink(ctx)
+            (ctx) => this.downloadTorrentFromRutrackerLink(ctx)
         );
 
-        bot.hears(/^\/topic(\d+)$/, ctx =>
+        bot.hears(/^\/topic(\d+)$/, (ctx) =>
             this.downloadTorrentFromRutrackerLink(ctx)
         );
-        bot.hears(/^\/more_([a-f0-9]+)$/, ctx =>
+        bot.hears(/^\/more_([a-f0-9]+)$/, (ctx) =>
             this.showMoreSearchResults(ctx)
         );
 
-        bot.hears(/^\/file(\d+)_(\d+)$/, ctx => this.sendFile(ctx));
+        bot.hears(/^\/file(\d+)_(\d+)$/, (ctx) => this.sendFile(ctx));
 
-        bot.hears(/^.+$/, ctx => this.searchTorrent(ctx));
+        bot.hears(/^.+$/, (ctx) => this.searchTorrent(ctx));
 
-        bot.action(/deleteTorrentYes:(\d+)/, ctx => this.deleteTorrentYes(ctx));
-        bot.action(/deleteTorrentNo:(\d+)/, ctx => this.deleteTorrentNo(ctx));
-        bot.action(/confirmDeleteTorrent:(\d+)/, ctx =>
+        bot.action(/deleteTorrentYes:(\d+)/, (ctx) =>
+            this.deleteTorrentYes(ctx)
+        );
+        bot.action(/deleteTorrentNo:(\d+)/, (ctx) => this.deleteTorrentNo(ctx));
+        bot.action(/confirmDeleteTorrent:(\d+)/, (ctx) =>
             this.confirmDeleteTorrent(ctx)
         );
 
-        bot.action(/listFiles:(\d+)/, ctx => this.listFiles(ctx));
+        bot.action(/listFiles:(\d+)/, (ctx) => this.listFiles(ctx));
 
-        bot.on("message", ctx => {
+        bot.on('message', (ctx) => {
             if (this.containsTorrentFile(ctx)) {
                 return this.addTorrent(ctx);
             }
@@ -131,10 +145,10 @@ class TelegramTransmissionBot {
         this.startCheckStatusPolling();
     }
 
-    async tunnel(ctx) {
+    async tunnel(ctx: Ctx) {
         try {
             const {
-                tunnel: { url }
+                tunnel: { url },
             } = await this.tunnelClient.start();
             ctx.reply(url);
         } catch (e) {
@@ -142,66 +156,63 @@ class TelegramTransmissionBot {
         }
     }
 
-    async untunnel(ctx) {
+    async untunnel(ctx: Ctx) {
         try {
             await this.tunnelClient.stop();
-            ctx.reply("Tunnel stopped");
+            ctx.reply('Tunnel stopped');
         } catch (e) {
             await ctx.reply(`Error: ${e}`);
         }
     }
 
-    async showMoreSearchResults(ctx) {
+    async showMoreSearchResults(ctx: Ctx) {
         try {
-            const {
-                match: [, id]
-            } = ctx;
+            const { match } = ctx;
+            const id = (match ?? [])[1];
 
             const list = await this.rutrackerSearchResultsList.get(id);
             if (!list || !list.length) {
-                await ctx.reply("No results");
+                await ctx.reply('No results');
                 return;
             }
 
-            await ctx.reply("Ranking...");
+            await ctx.reply('Ranking...');
             const topics = await this.rutracker.getTopics(
-                list.map(result => result.topicId)
+                list.map((result) => result.topicId)
             );
             const rankedResults = rankResults(list, topics);
             await ctx.replyWithHTML(
                 rankedResults
-                    .map(result => this.formatSearchResult(result))
-                    .join("\n\n")
+                    .map((result) => this.formatSearchResult(result))
+                    .join('\n\n')
             );
         } catch (e) {
             debug(`Error: ${e}`);
             return ctx.reply(`Error: ${e}`);
         }
     }
-    async searchTorrent(ctx) {
+    async searchTorrent(ctx: Ctx) {
         try {
-            const {
-                message: { text }
-            } = ctx;
+            const { message: { text = '' } = {} } = ctx;
 
-            await ctx.reply("Searching...");
+            await ctx.reply('Searching...');
 
             const items = await this.rutracker.search(text);
-            const clusters = clusterizeResults(items, "seeds");
+            const clusters = clusterizeResults(items, 'seeds');
             if (!clusters.length) {
-                await ctx.reply("No results");
+                await ctx.reply('No results');
                 return;
             }
             const [popularCluster, otherCluster] = clusters;
-            await ctx.reply("Ranking...");
+            await ctx.reply('Ranking...');
             const topics = await this.rutracker.getTopics(
-                popularCluster.map(result => result.topicId)
+                popularCluster.map((result) => result.topicId)
             );
             const rankedResults = rankResults(popularCluster, topics);
             await ctx.replyWithHTML(
                 rankedResults
-                    .map(result => this.formatSearchResult(result))
-                    .join("\n\n")
+                    .map((result) => this.formatSearchResult(result))
+                    .join('\n\n')
             );
 
             if (otherCluster && otherCluster.length) {
@@ -219,47 +230,43 @@ class TelegramTransmissionBot {
         }
     }
 
-    /**
-     *
-     * @param { import('rutracker-sucker').RankedSearchResult } result
-     */
-    formatSearchResult(result) {
+    formatSearchResult(result: RankedSearchResult) {
         return [
             `${this.formatRank(result.rank)} ${result.title}`,
             `<a href="${result.topicUrl}">View</a>`,
             `Seeds: <b>${result.seeds}</b>`,
             `<i>${bytes(result.size)}</i>`,
-            `⬇️ Download: /topic${result.topicId}`
-        ].join("\n");
+            `⬇️ Download: /topic${result.topicId}`,
+        ].join('\n');
     }
 
-    formatRank(rank) {
+    formatRank(rank: number) {
         if (rank < 0) {
-            return _("😁").repeat(-rank);
+            return _('😥').repeat(-rank);
         } else if (rank > 0) {
-            return _("😥").repeat(rank);
+            return _('😁').repeat(rank);
         } else {
-            return "";
+            return '';
         }
     }
 
-    async downloadTorrentFromRutrackerLink(ctx) {
+    async downloadTorrentFromRutrackerLink(ctx: Ctx) {
         try {
             const {
-                match: [, topicIdStr]
+                match: [, topicIdStr],
             } = ctx;
             const topicId = parseInt(topicIdStr, 10);
             if (!topicId) {
-                throw new Error("Illegal topic ID");
+                throw new Error('Illegal topic ID');
             }
             const file = await this.rutracker.getTorrentFile(topicId);
             const torrent = await this.transmission.addBase64(
-                file.data.toString("base64")
+                file.data.toString('base64')
             );
             await ctx.reply(`Added "${torrent.name}"`);
             await this.waitList.add(torrent.id, ctx.chat.id);
 
-            await ctx.reply("Torrent added");
+            await ctx.reply('Torrent added');
         } catch (e) {
             debug(`Error: ${e}`);
             return ctx.reply(`Error: ${e}`);
@@ -274,23 +281,23 @@ class TelegramTransmissionBot {
                 await this.checkStatuses();
             } catch (error) {
                 debug(
-                    "checkStatuses failed with error %s",
-                    error.stack || error.message
+                    'checkStatuses failed with error %s',
+                    error.stack ?? error.message
                 );
             }
         }
     }
 
-    containsTorrentFile(ctx) {
+    containsTorrentFile(ctx: Ctx) {
         const { message: { document: { mime_type } = {} } = {} } = ctx;
-        return mime_type === "application/x-bittorrent";
+        return mime_type === 'application/x-bittorrent';
     }
 
-    async addTorrent(ctx) {
+    async addTorrent(ctx: Ctx) {
         const {
             message: {
-                document: { file_id }
-            }
+                document: { file_id },
+            },
         } = ctx;
         const { transmission } = this;
         try {
@@ -305,7 +312,7 @@ class TelegramTransmissionBot {
     }
 
     async checkStatuses() {
-        debug("Status check");
+        debug('Status check');
         const { transmission, bot } = this;
 
         const chatIdByTorrentId = await this.waitList.getAll();
@@ -313,17 +320,17 @@ class TelegramTransmissionBot {
         if (waitListLength === 0) {
             return;
         }
-        debug("Checking %d torrents", waitListLength);
-        const torrentIds = Object.keys(chatIdByTorrentId).map(i =>
+        debug('Checking %d torrents', waitListLength);
+        const torrentIds = Object.keys(chatIdByTorrentId).map((i) =>
             parseInt(i, 10)
         );
         const { torrents } = await transmission.get(torrentIds);
 
         //Collect garbage (ids present in Redis but missing in Transmission)
-        const foundTorrentIds = torrents.map(t => parseInt(t.id, 10));
+        const foundTorrentIds = torrents.map((t) => parseInt(t.id, 10));
         for (const waitingTorrentId of Object.keys(chatIdByTorrentId)) {
             if (!foundTorrentIds.includes(parseInt(waitingTorrentId, 10))) {
-                debug("Torrent not found in transmission %s", waitingTorrentId);
+                debug('Torrent not found in transmission %s', waitingTorrentId);
                 await this.waitList.remove(waitingTorrentId);
             }
         }
@@ -331,7 +338,7 @@ class TelegramTransmissionBot {
         //Check statuses
         for (const torrent of torrents) {
             if (torrent.status > 4) {
-                debug("Torrent finished: %s", torrent.name);
+                debug('Torrent finished: %s', torrent.name);
                 const chatId = parseInt(chatIdByTorrentId[torrent.id], 10);
                 await this.waitList.remove(torrent.id);
                 if (chatId) {
@@ -345,31 +352,32 @@ class TelegramTransmissionBot {
     }
 
     renderStatus(torrent) {
-        return {
-            0: "🚫 Stopped", // Torrent is stopped
-            1: "❓ Checking", // Queued to check files
-            2: "❓ Checking", // Checking files
-            3: "⬇️ Downloading", // Queued to download
-            4: "⬇️ Downloading", // Downloading
-            5: "⬆️ Seeding", // Queued to seed
-            6: "⬆️ Seeding", // Seeding
-            7: "😞 Cannot find peers" // Torrent can't find peers
-        }[torrent.status];
+        return;
+        [
+            '🚫 Stopped', // Torrent is stopped
+            '❓ Checking', // Queued to check files
+            '❓ Checking', // Checking files
+            '⬇️ Downloading', // Queued to download
+            '⬇️ Downloading', // Downloading
+            '⬆️ Seeding', // Queued to seed
+            '⬆️ Seeding', // Seeding
+            '😞 Cannot find peers', // Torrent can't find peers
+        ][torrent.status];
     }
 
     renderProgress(torrent) {
         //Example: ██░░░░░░░░ 20%
         const { percentDone } = torrent;
         if (percentDone === 1) {
-            return "";
+            return '';
         }
         const length = 10;
         const filledCount = Math.round(percentDone * length);
         const emptyCount = length - filledCount;
-        const filled = _.repeat("█", filledCount);
-        const empty = _.repeat("░", emptyCount);
+        const filled = _.repeat('█', filledCount);
+        const empty = _.repeat('░', emptyCount);
         const percentage = Math.round(percentDone * 100);
-        const etaStr = duration(torrent.eta, "seconds").humanize();
+        const etaStr = duration(torrent.eta, 'seconds').humanize();
         return `${filled}${empty} ${percentage}%\nRemaining time: ${etaStr}\n`;
     }
 
@@ -381,12 +389,12 @@ class TelegramTransmissionBot {
         return `\n/torrent${t.id}\n${status} ${size}\n${progress}  ${t.name}`;
     }
 
-    async showInfo(ctx) {
+    async showInfo(ctx: Ctx) {
         const { transmission } = this;
         const {
-            "download-dir": downloadDir,
-            "download-dir-free-space": downloadDirFreeSpace,
-            version
+            'download-dir': downloadDir,
+            'download-dir-free-space': downloadDirFreeSpace,
+            version,
         } = await transmission.session();
 
         const { tunnel } = await this.tunnelClient.status();
@@ -399,25 +407,25 @@ Transmission ${version}
 Download directory: ${downloadDir}
 Free space: ${freeSpaceStr}
 
-Tunnel is ${tunnel.isRunning ? "up" : "down"}
-${tunnel.isRunning ? `Url: ${tunnel.url}, stop: /untunnel` : "start: /tunnel"}
+Tunnel is ${tunnel.isRunning ? 'up' : 'down'}
+${tunnel.isRunning ? `Url: ${tunnel.url}, stop: /untunnel` : 'start: /tunnel'}
 `
         );
     }
 
-    async listTorrents(ctx) {
+    async listTorrents(ctx: Ctx) {
         const { transmission } = this;
         try {
             const { torrents } = await transmission.all();
 
             const topTorrents = _(torrents)
-                .orderBy(["addedDate"], ["desc"])
+                .orderBy(['addedDate'], ['desc'])
                 .slice(0, 10)
                 .value();
 
             const message = topTorrents
-                .map(t => this.renderTorrent(t))
-                .join("\n");
+                .map((t) => this.renderTorrent(t))
+                .join('\n');
             return ctx.reply(`Recent torrents (up to 10):\n${message}`);
         } catch (e) {
             debug(`Error: ${e}`);
@@ -425,7 +433,7 @@ ${tunnel.isRunning ? `Url: ${tunnel.url}, stop: /untunnel` : "start: /tunnel"}
         }
     }
 
-    async deleteTorrentYes(ctx) {
+    async deleteTorrentYes(ctx: Ctx) {
         const { match = [] } = ctx;
         const id = match[1];
         if (!id) {
@@ -434,14 +442,14 @@ ${tunnel.isRunning ? `Url: ${tunnel.url}, stop: /untunnel` : "start: /tunnel"}
 
         await this.transmission.remove(parseInt(id, 10), true);
         await ctx.deleteMessage();
-        await ctx.reply("Torrent deleted\n/list");
+        await ctx.reply('Torrent deleted\n/list');
     }
 
     /**
      *
      * @param {import('telegraf').ContextMessageUpdate} ctx
      */
-    async deleteTorrentNo(ctx) {
+    async deleteTorrentNo(ctx: Ctx) {
         const { match = [] } = ctx;
         const id = match[1];
         if (!id) {
@@ -451,15 +459,15 @@ ${tunnel.isRunning ? `Url: ${tunnel.url}, stop: /untunnel` : "start: /tunnel"}
         await ctx.deleteMessage();
     }
 
-    async listFiles(ctx) {
+    async listFiles(ctx: Ctx) {
         try {
             const { match = [] } = ctx;
             const id = parseInt(match[1], 10);
             const {
-                torrents: [{ files } = {}] = []
+                torrents: [{ files } = {}] = [],
             } = await this.transmission.get(id);
             if (!files) {
-                await ctx.reply("Files not found");
+                await ctx.reply('Files not found');
                 return;
             }
 
@@ -474,7 +482,7 @@ ${tunnel.isRunning ? `Url: ${tunnel.url}, stop: /untunnel` : "start: /tunnel"}
      *
      * @param {import('telegraf').ContextMessageUpdate} ctx
      */
-    async sendFile(ctx) {
+    async sendFile(ctx: Ctx) {
         try {
             const { match = [] } = ctx;
             const id = parseInt(match[1], 10);
@@ -484,14 +492,14 @@ ${tunnel.isRunning ? `Url: ${tunnel.url}, stop: /untunnel` : "start: /tunnel"}
                     {
                         downloadDir,
                         files: {
-                            [fileIndex]: { name }
-                        }
-                    }
-                ]
+                            [fileIndex]: { name },
+                        },
+                    },
+                ],
             } = await this.transmission.get(id);
 
             if (!name) {
-                throw new Error("File not found");
+                throw new Error('File not found');
             }
             const fullPath = path.join(downloadDir, name);
             await ctx.replyWithDocument({ source: fullPath });
@@ -505,10 +513,10 @@ ${tunnel.isRunning ? `Url: ${tunnel.url}, stop: /untunnel` : "start: /tunnel"}
         const skipped =
             files.length > 25
                 ? `\n\n<b>${files.length - 25} files were skipped</b>`
-                : "";
+                : '';
         return fileTree.renderFilesList(files.slice(0, 25), id) + skipped;
     }
-    async confirmDeleteTorrent(ctx) {
+    async confirmDeleteTorrent(ctx: Ctx) {
         const { match = [] } = ctx;
         const id = match[1];
         if (!id) {
@@ -516,19 +524,22 @@ ${tunnel.isRunning ? `Url: ${tunnel.url}, stop: /untunnel` : "start: /tunnel"}
         }
 
         await ctx.reply(
-            "Are you sure?",
-            Extra.markup(m =>
+            'Are you sure?',
+            Extra.markup((m) =>
                 m.inlineKeyboard([
                     m.callbackButton(
-                        "❌ Yes, delete it",
+                        '❌ Yes, delete it',
                         `deleteTorrentYes:${id}`
                     ),
-                    m.callbackButton("✅ No, leave it", `deleteTorrentNo:${id}`)
+                    m.callbackButton(
+                        '✅ No, leave it',
+                        `deleteTorrentNo:${id}`
+                    ),
                 ])
             )
         );
     }
-    async selectTorrent(ctx) {
+    async selectTorrent(ctx: Ctx) {
         try {
             const { match = [] } = ctx;
             const idStr = match[1];
@@ -541,7 +552,7 @@ ${tunnel.isRunning ? `Url: ${tunnel.url}, stop: /untunnel` : "start: /tunnel"}
             }
 
             const {
-                torrents: [torrent]
+                torrents: [torrent],
             } = await this.transmission.get(id);
             if (!torrent) {
                 await ctx.reply(`Cannot find this torrent: id=${id}`);
@@ -551,13 +562,13 @@ ${tunnel.isRunning ? `Url: ${tunnel.url}, stop: /untunnel` : "start: /tunnel"}
             const torrentMessage = this.renderTorrent(torrent);
             await ctx.reply(
                 torrentMessage,
-                Extra.markup(m =>
+                Extra.markup((m) =>
                     m.inlineKeyboard([
                         m.callbackButton(
-                            "❌ Delete",
+                            '❌ Delete',
                             `confirmDeleteTorrent:${torrent.id}`
                         ),
-                        m.callbackButton("📁 Files", `listFiles:${torrent.id}`)
+                        m.callbackButton('📁 Files', `listFiles:${torrent.id}`),
                     ])
                 )
             );
