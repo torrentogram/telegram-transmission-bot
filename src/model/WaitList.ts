@@ -13,11 +13,11 @@ export class WaitList {
         return await this.redis.hdel(PREFIX, torrentId);
     }
 
-    async add(torrentId: string, chatId: string) {
+    async add(torrentId: string, chatId: number) {
         return await this.redis.hset(PREFIX, torrentId, chatId);
     }
 
     async getAll() {
         return await this.redis.hgetall(PREFIX);
     }
-};
+}

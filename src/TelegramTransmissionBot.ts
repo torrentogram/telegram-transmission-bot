@@ -1,34 +1,42 @@
-import path from 'path';
-import Telegraf from 'telegraf';
-import { Extra } from 'telegraf';
-import Transmission from 'transmission-promise';
+import assert from 'assert';
+import bytes from 'bytes';
+import Debug from 'debug';
+import IORedis, { Redis } from 'ioredis';
 import _ from 'lodash';
 import { duration } from 'moment';
-import bytes from 'bytes';
-import IORedis, { Redis } from 'ioredis';
-const debug = require('debug')('TelegramTransmissionBot');
-
-//@ts-ignore
-import TelegrafLogger from 'telegraf-logger';
-import sleep from 'sleep-promise';
-
-import { WaitList } from './model/WaitList';
-import { RutrackerSearchResultsList } from './model/RutrackerSearchResultsList';
-import fileTree from './lib/fileTree';
-import { TunnelAPI } from './lib/TunnelAPI';
+import path from 'path';
 import {
-    RutrackerSucker,
-    rankResults,
     clusterizeResults,
     RankedSearchResult,
+    rankResults,
+    RutrackerSucker,
 } from 'rutracker-sucker';
+import sleep from 'sleep-promise';
+import Telegraf, { Extra } from 'telegraf';
+//@ts-ignore
+import TelegrafLogger from 'telegraf-logger';
+import { MiddlewareFn } from 'telegraf/typings/composer';
 import { TelegrafContext } from 'telegraf/typings/context';
+import Transmission from 'transmission-promise';
+import { match } from 'ts-pattern';
+import { renderFilesList } from './lib/fileTree';
+import { TunnelAPI } from './lib/TunnelAPI';
+import { RutrackerSearchResultsList } from './model/RutrackerSearchResultsList';
+import { WaitList } from './model/WaitList';
+import {
+    TransmissionFile,
+    TransmissionResponseTorrentGet,
+    TransmissionTorrent,
+    TransmissionTorrentStatus,
+} from './transmissionTypes';
+
+const debug = Debug('TelegramTransmissionBot');
 
 const CHECK_POLLING_INTERVAL = 10000;
 
 type Ctx = TelegrafContext;
 
-class TelegramTransmissionBot {
+export class TelegramTransmissionBot {
     private readonly bot: Telegraf<Ctx>;
     private readonly transmission: Transmission;
     private readonly allowedUsers: string[];
@@ -49,7 +57,8 @@ class TelegramTransmissionBot {
     }: {
         token: string;
         transmissionOptions: {
-            port?: string;
+            host: string;
+            port?: number;
             username: string;
             password: string;
         };
@@ -80,18 +89,20 @@ class TelegramTransmissionBot {
         this.tunnelClient = new TunnelAPI({ url: tunnelApi });
     }
 
-    authMiddleware(ctx: Ctx, next) {
-        const {
-            chat,
-            chat: { username },
-        } = ctx;
+    private authMiddleware: MiddlewareFn<Ctx> = (ctx, next) => {
+        const { chat } = ctx;
+
+        //TODO: crap
+        const username = (chat as any).username as string;
+
         if (this.allowedUsers.includes(username)) {
-            next(ctx);
+            //TODO: before the refactoring it waqs next(ctx). Check if it still works
+            next();
         } else {
             ctx.reply('You are not authenticated to this bot');
             debug(`Access denied for chat ${JSON.stringify(chat)}`);
         }
-    }
+    };
 
     launch() {
         const { bot } = this;
@@ -252,9 +263,8 @@ class TelegramTransmissionBot {
 
     async downloadTorrentFromRutrackerLink(ctx: Ctx) {
         try {
-            const {
-                match: [, topicIdStr],
-            } = ctx;
+            const { match, chat } = ctx;
+            const topicIdStr = (match ?? [])[1];
             const topicId = parseInt(topicIdStr, 10);
             if (!topicId) {
                 throw new Error('Illegal topic ID');
@@ -264,7 +274,8 @@ class TelegramTransmissionBot {
                 file.data.toString('base64')
             );
             await ctx.reply(`Added "${torrent.name}"`);
-            await this.waitList.add(torrent.id, ctx.chat.id);
+            assert.ok(chat?.id);
+            await this.waitList.add(torrent.id, chat?.id);
 
             await ctx.reply('Torrent added');
         } catch (e) {
@@ -282,29 +293,28 @@ class TelegramTransmissionBot {
             } catch (error) {
                 debug(
                     'checkStatuses failed with error %s',
-                    error.stack ?? error.message
+                    //TODO: crap
+                    (error as Error).stack ?? (error as Error).message
                 );
             }
         }
     }
 
     containsTorrentFile(ctx: Ctx) {
-        const { message: { document: { mime_type } = {} } = {} } = ctx;
-        return mime_type === 'application/x-bittorrent';
+        return ctx.message?.document.mime_type === 'application/x-bittorrent';
     }
 
     async addTorrent(ctx: Ctx) {
-        const {
-            message: {
-                document: { file_id },
-            },
-        } = ctx;
         const { transmission } = this;
+        const fileId = ctx.message?.document.file_id;
+        const chatId = ctx.chat?.id;
         try {
-            const fileLink = await ctx.tg.getFileLink(file_id);
+            assert.ok(fileId);
+            assert.ok(chatId);
+            const fileLink = await ctx.tg.getFileLink(fileId);
             const torrent = await transmission.addUrl(fileLink);
             await ctx.reply(`Added "${torrent.name}"`);
-            await this.waitList.add(torrent.id, ctx.chat.id);
+            await this.waitList.add(torrent.id, chatId);
         } catch (e) {
             debug(`Error: ${e}`);
             return ctx.reply(`Error: ${e}`);
@@ -324,10 +334,15 @@ class TelegramTransmissionBot {
         const torrentIds = Object.keys(chatIdByTorrentId).map((i) =>
             parseInt(i, 10)
         );
-        const { torrents } = await transmission.get(torrentIds);
+        const { torrents } = (await transmission.get(
+            torrentIds
+        )) as TransmissionResponseTorrentGet;
 
         //Collect garbage (ids present in Redis but missing in Transmission)
-        const foundTorrentIds = torrents.map((t) => parseInt(t.id, 10));
+        const foundTorrentIds = torrents.map((t) =>
+            //TODO: check in the runtime if id is number or string then update the type
+            typeof t.id === 'string' ? parseInt(t.id, 10) : t.id
+        );
         for (const waitingTorrentId of Object.keys(chatIdByTorrentId)) {
             if (!foundTorrentIds.includes(parseInt(waitingTorrentId, 10))) {
                 debug('Torrent not found in transmission %s', waitingTorrentId);
@@ -340,7 +355,8 @@ class TelegramTransmissionBot {
             if (torrent.status > 4) {
                 debug('Torrent finished: %s', torrent.name);
                 const chatId = parseInt(chatIdByTorrentId[torrent.id], 10);
-                await this.waitList.remove(torrent.id);
+                //TODO: crap
+                await this.waitList.remove(`${torrent.id}`);
                 if (chatId) {
                     await bot.telegram.sendMessage(
                         chatId,
@@ -351,21 +367,26 @@ class TelegramTransmissionBot {
         }
     }
 
-    renderStatus(torrent) {
-        return;
-        [
-            '🚫 Stopped', // Torrent is stopped
-            '❓ Checking', // Queued to check files
-            '❓ Checking', // Checking files
-            '⬇️ Downloading', // Queued to download
-            '⬇️ Downloading', // Downloading
-            '⬆️ Seeding', // Queued to seed
-            '⬆️ Seeding', // Seeding
-            '😞 Cannot find peers', // Torrent can't find peers
-        ][torrent.status];
+    renderStatus(torrent: TransmissionTorrent) {
+        return match(torrent.status)
+            .with(TransmissionTorrentStatus.Stopped, () => '🚫 Stopped')
+            .with(TransmissionTorrentStatus.CheckQueued, () => '❓ Checking')
+            .with(TransmissionTorrentStatus.Checking, () => '❓ Checking')
+            .with(
+                TransmissionTorrentStatus.DownloadQueued,
+                () => '⬇️ Downloading'
+            )
+            .with(TransmissionTorrentStatus.Downloading, () => '⬇️ Downloading')
+            .with(TransmissionTorrentStatus.SeedQueued, () => '⬆️ Seeding')
+            .with(TransmissionTorrentStatus.Seeding, () => '⬆️ Seeding')
+            .with(
+                TransmissionTorrentStatus.__UndocumentedCantFindPeers__,
+                () => '😞 Cannot find peers'
+            )
+            .otherwise(() => '🤷‍♂️ Unknown');
     }
 
-    renderProgress(torrent) {
+    renderProgress(torrent: TransmissionTorrent) {
         //Example: ██░░░░░░░░ 20%
         const { percentDone } = torrent;
         if (percentDone === 1) {
@@ -381,7 +402,7 @@ class TelegramTransmissionBot {
         return `${filled}${empty} ${percentage}%\nRemaining time: ${etaStr}\n`;
     }
 
-    renderTorrent(t) {
+    renderTorrent(t: TransmissionTorrent) {
         const status = this.renderStatus(t);
         const progress = this.renderProgress(t);
         const size = bytes(t.sizeWhenDone);
@@ -395,6 +416,7 @@ class TelegramTransmissionBot {
             'download-dir': downloadDir,
             'download-dir-free-space': downloadDirFreeSpace,
             version,
+            //@ts-ignore `transmission.session()` is typed incorrectly in the library
         } = await transmission.session();
 
         const { tunnel } = await this.tunnelClient.status();
@@ -435,7 +457,7 @@ ${tunnel.isRunning ? `Url: ${tunnel.url}, stop: /untunnel` : 'start: /tunnel'}
 
     async deleteTorrentYes(ctx: Ctx) {
         const { match = [] } = ctx;
-        const id = match[1];
+        const id = (match ?? [])[1];
         if (!id) {
             return;
         }
@@ -451,7 +473,7 @@ ${tunnel.isRunning ? `Url: ${tunnel.url}, stop: /untunnel` : 'start: /tunnel'}
      */
     async deleteTorrentNo(ctx: Ctx) {
         const { match = [] } = ctx;
-        const id = match[1];
+        const id = (match ?? [])[1];
         if (!id) {
             return;
         }
@@ -461,11 +483,13 @@ ${tunnel.isRunning ? `Url: ${tunnel.url}, stop: /untunnel` : 'start: /tunnel'}
 
     async listFiles(ctx: Ctx) {
         try {
-            const { match = [] } = ctx;
-            const id = parseInt(match[1], 10);
+            const { match } = ctx;
+            const id = parseInt((match ?? [])[1], 10);
             const {
-                torrents: [{ files } = {}] = [],
-            } = await this.transmission.get(id);
+                torrents: [{ files = [] } = {}] = [],
+            } = (await this.transmission.get(
+                id
+            )) as TransmissionResponseTorrentGet;
             if (!files) {
                 await ctx.reply('Files not found');
                 return;
@@ -484,9 +508,9 @@ ${tunnel.isRunning ? `Url: ${tunnel.url}, stop: /untunnel` : 'start: /tunnel'}
      */
     async sendFile(ctx: Ctx) {
         try {
-            const { match = [] } = ctx;
-            const id = parseInt(match[1], 10);
-            const fileIndex = parseInt(match[2], 10);
+            const { match } = ctx;
+            const id = parseInt((match ?? [])[1], 10);
+            const fileIndex = parseInt((match ?? [])[2], 10);
             const {
                 torrents: [
                     {
@@ -496,7 +520,9 @@ ${tunnel.isRunning ? `Url: ${tunnel.url}, stop: /untunnel` : 'start: /tunnel'}
                         },
                     },
                 ],
-            } = await this.transmission.get(id);
+            } = (await this.transmission.get(
+                id
+            )) as TransmissionResponseTorrentGet;
 
             if (!name) {
                 throw new Error('File not found');
@@ -509,16 +535,16 @@ ${tunnel.isRunning ? `Url: ${tunnel.url}, stop: /untunnel` : 'start: /tunnel'}
         }
     }
 
-    renderFiles(id, files) {
+    renderFiles(id: number, files: TransmissionFile[]) {
         const skipped =
             files.length > 25
                 ? `\n\n<b>${files.length - 25} files were skipped</b>`
                 : '';
-        return fileTree.renderFilesList(files.slice(0, 25), id) + skipped;
+        return renderFilesList(files.slice(0, 25), id) + skipped;
     }
     async confirmDeleteTorrent(ctx: Ctx) {
-        const { match = [] } = ctx;
-        const id = match[1];
+        const { match } = ctx;
+        const id = (match ?? [])[1];
         if (!id) {
             return;
         }
@@ -541,8 +567,8 @@ ${tunnel.isRunning ? `Url: ${tunnel.url}, stop: /untunnel` : 'start: /tunnel'}
     }
     async selectTorrent(ctx: Ctx) {
         try {
-            const { match = [] } = ctx;
-            const idStr = match[1];
+            const { match } = ctx;
+            const idStr = (match ?? [])[1];
             if (!idStr) {
                 return;
             }
@@ -578,5 +604,3 @@ ${tunnel.isRunning ? `Url: ${tunnel.url}, stop: /untunnel` : 'start: /tunnel'}
         }
     }
 }
-
-module.exports = TelegramTransmissionBot;

@@ -1,20 +1,20 @@
-const { parseFilesList, renderNodes } = require("./fileTree");
+import { parseFilesList, renderNodes } from './fileTree';
 
-describe("fileTree", () => {
+describe('fileTree', () => {
     /**
      * @type {Array<import('./fileTree').FileItem>}
      */
     const files = [
-        { name: "folder 1/file1.txt", length: 1024, bytesCompleted: 1024 },
-        { name: "folder 1/file2.txt", length: 1024, bytesCompleted: 1024 },
-        { name: "file3.txt", length: 1024, bytesCompleted: 1024 },
-        { name: "file4.txt", length: 1024, bytesCompleted: 1024 },
-        { name: "folder 2/file5.txt", length: 1024, bytesCompleted: 1024 },
-        { name: "folder 2/file6.txt", length: 1024, bytesCompleted: 50 }
+        { name: 'folder 1/file1.txt', length: 1024, bytesCompleted: 1024 },
+        { name: 'folder 1/file2.txt', length: 1024, bytesCompleted: 1024 },
+        { name: 'file3.txt', length: 1024, bytesCompleted: 1024 },
+        { name: 'file4.txt', length: 1024, bytesCompleted: 1024 },
+        { name: 'folder 2/file5.txt', length: 1024, bytesCompleted: 1024 },
+        { name: 'folder 2/file6.txt', length: 1024, bytesCompleted: 50 }
     ];
     const torrentId = 123;
-    describe("parseFilesList", () => {
-        it("should convert a list of files to a list of nodes", () => {
+    describe('parseFilesList', () => {
+        it('should convert a list of files to a list of nodes', () => {
             expect(parseFilesList(files, torrentId)).toMatchInlineSnapshot(`
                 Array [
                   Object {
@@ -69,8 +69,8 @@ describe("fileTree", () => {
             `);
         });
     });
-    describe("renderNodes", () => {
-        it("should convert a list of nodes to string", () => {
+    describe('renderNodes', () => {
+        it('should convert a list of nodes to string', () => {
             expect(renderNodes(parseFilesList(files, torrentId)))
                 .toMatchInlineSnapshot(`
                 "<pre>📂 folder 1/:</pre>
