@@ -1,23 +1,23 @@
+import { Redis } from 'ioredis';
+
 const PREFIX = 'TelegramTransmissionBot:WaitList';
 
-module.exports = class WaitList {
-    /**
-     * @param {Object} options
-     * @param {import('ioredis').Redis} options.redis
-     */
-    constructor({ redis }) {
+export class WaitList {
+    private redis: Redis;
+
+    constructor({ redis }: { redis: Redis }) {
         this.redis = redis;
     }
 
-    async remove(torrentId) {
+    async remove(torrentId: string) {
         return await this.redis.hdel(PREFIX, torrentId);
     }
 
-    async add(torrentId, chatId) {
+    async add(torrentId: string, chatId: number) {
         return await this.redis.hset(PREFIX, torrentId, chatId);
     }
 
     async getAll() {
         return await this.redis.hgetall(PREFIX);
     }
-};
+}

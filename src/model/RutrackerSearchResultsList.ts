@@ -1,15 +1,15 @@
+import { Redis } from 'ioredis';
+import { SearchResult } from 'rutracker-sucker';
+
 const PREFIX = 'TelegramTransmissionBot:RutrackerSearchResultsList';
 
-module.exports = class RutrackerSearchResultsList {
-    /**
-     * @param {Object} options
-     * @param {import('ioredis').Redis} options.redis
-     */
-    constructor({ redis }) {
+export class RutrackerSearchResultsList {
+    private redis: Redis;
+    constructor({ redis }: { redis: Redis }) {
         this.redis = redis;
     }
 
-    async create(results) {
+    async create(results: SearchResult[]) {
         const id = Math.floor(Math.random() * 1e9).toString(16);
         await this.redis.setex(
             `${PREFIX}:${id}`,
@@ -19,11 +19,11 @@ module.exports = class RutrackerSearchResultsList {
         return id;
     }
 
-    async get(id) {
+    async get(id: string): Promise<SearchResult[] | null> {
         const str = await this.redis.get(`${PREFIX}:${id}`);
         if (!str) {
             return null;
         }
         return JSON.parse(str);
     }
-};
+}
